@@ -35,7 +35,9 @@ To run the millepede macro:
    In that case, just request in the "millepede_def.py" script that the
    hits on track are built for every wire, not requiring them to be in the good wires' list.
    In the first iteration (iter 0), wires 500, 1000, 1600 have been removed.
-5. The script returns a binary file in Mille Style with name "mp2meg2_{ITERATION}.bin"
+5. *If you are running out of MEG II cluster* Copy from your cluster repo the outTrack* files
+   on your machine (recommended because you may have faster machines then the ones on cluster)
+6. The script returns a binary file in Mille Style with name "mp2meg2_{ITERATION}.bin"
    that can be run using the Pede executable of
    [MillePedeII software](https://gitlab.desy.de/claus.kleinwort/millepede-ii/-/tree/main)
    $ ./pede steer.txt
