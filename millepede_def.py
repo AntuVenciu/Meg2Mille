@@ -285,10 +285,29 @@ class CRTrack() :
         self.glder.tofile(aFile)
         self.inder.tofile(aFile)
 
+def write_parameter_file(geom):
+    """
+    write a params.txt file to be used by Pede.
+    Contains all initial values of wire parameters from the
+    specified geom ID.
+    pre-sigma is 0.0 for every parameter except gamma, which is poorly defined
+    """
+    with open("desy/millepede-ii/params.txt", "w") as aFile:
+        for w in good_wires:
+            wire = Wire(geom, w)
+            for i, par in enumerate(wire.alignpars):
+                # define pre-sigma and label of par
+                label = dict_wire_to_label[w] * ALIGN_PARS + i + 1
+                pre_sigma = 0.0
+                if i == 4:
+                    pre_sigma = 0.05 # on gamma add more uncertainty
+                entry = f"{label} {par} {pre_sigma}\n"
+                aFile.write(entry)        
 
-############
-# BELLURIE #
-############
+
+##############################################################
+#                        BELLURIE                            #
+##############################################################
 
 def plot_survey(geom):
     """
@@ -522,6 +541,10 @@ crtree = TChain("trk")
 crtree.Add(f"residuals_iter_{ITERATION}/outTrack_437*.root")
 print(f"Data File opened... GEOMETRY ID = {GEO_ID}, MillePede Step = {ITERATION} ...")
 
+# Write parameter file for this GEO_ID
+write_parameter_file(GEO_ID)
+
+# Start Mille
 t_start = time.time()
 with open(outputfilename, "ab") as aFile:
     for ev in crtree:
