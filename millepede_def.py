@@ -293,6 +293,7 @@ def write_parameter_file(geom):
     pre-sigma is 0.0 for every parameter except gamma, which is poorly defined
     """
     with open("desy/millepede-ii/params.txt", "w") as aFile:
+        aFile.write("Parameter\n")
         for w in good_wires:
             wire = Wire(geom, w)
             for i, par in enumerate(wire.alignpars):
