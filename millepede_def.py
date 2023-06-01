@@ -226,9 +226,7 @@ class CRHit() :
         self.der_track = [der(self.params) for der in fast_der_track]
         if not any(self.der_track):
             print("Found zeros in local derivatives!")
-        #print(f"Derivatives for track: {self.der_track}")
-        #print(f"GLOBAL DERIVATIVES WIRE {wire}: {self.der_align}")
-        
+
 class CRTrack() :
     """
     Class allowing to handle easily the 
@@ -292,7 +290,12 @@ class CRTrack() :
 # BELLURIE #
 ############
 
-def plot_survey():
+def plot_survey(geom):
+    """
+    Plot histogram of difference between extremal wires position (w = +/- 95 cm)
+    for Nominal Geometry (with values in anode_CYLDCH46.txt) and
+    given geometrical ID geom.
+    """
     res = []
     id_wire, x_s, y_s, z_s, w_s = np.loadtxt("anode_CYLDCH46.txt", unpack=True)
     for wire, x, y, z, w in zip(id_wire, x_s, y_s, z_s, w_s):
@@ -310,33 +313,37 @@ def plot_survey():
             res.append(event[0].res)
     # Plot survey residuals
     plt.figure(1)
-    plt.title("Survey residuals")
+    plt.title(f"Difference for GEOMETRY {geom} with respect to Survey")
     plt.xlabel("[cm]")
     plt.hist(np.array(res),
                       bins=100,
                       color="blue")
     plt.grid(alpha=.5)
     plt.legend()
-    plt.savefig("Survey_residuals_66.pdf")
+    plt.savefig(f"Survey_residuals_{geom}.pdf")
     plt.show()
-    
- 
-def plot_geometry():
+
+
+def plot_geometry(geom, min_wire=192, max_wire=1920, plot_survey=True):
+    """
+    Plot the Geometry of the Drift Chamber in 3D for all wires between min_wire and max_wire.
+    If plot_survey is True, also the US and DS position of the wires as measured in survey are
+    drown.
+    """
     z_vec = np.linspace(-100., 100., 10)
-    wires = [Wire(70, w) for w in range(192, 385)]
+    wires = [Wire(geom, w) for w in range(min_wire, max_wire)]
     fig = plt.figure()
     plt.title("CDCH Geometry")
     ax = fig.add_subplot(projection="3d")
+    # Plot wires
     for w in wires:
-        #print(fast_wire_coord([*w.alignpars, 10])[0][0])
         x_w = [fast_wire_coord([*w.alignpars, z])[0][0] for z in z_vec]
         y_w = [fast_wire_coord([*w.alignpars, z])[1][0] for z in z_vec]
         ax.plot(x_w, y_w, z_vec, color='pink', alpha=.2)
-    plane, us_hw, ds_hw, us_sw, ds_sw, c_sw9, c_sw10, act_flag, miss_flag = np.loadtxt("anodeIDconverter_2021.txt", unpack=True)
-    dict_us = dict(zip(c_sw10.astype(int), (us_hw - 192*np.ones(len(us_hw))).astype(int)))
-    id_wire, x_us, y_us, z_us, x_ds, y_ds, z_ds = np.loadtxt("anode_survey.txt", unpack=True)
-    ax.scatter(x_us[:192]/10., y_us[:192]/10., z_us[:192]/10., marker='.', color='blue', alpha=.3)
-    ax.scatter(x_ds[:192]/10., y_ds[:192]/10., z_ds[:192]/10., marker='.', color='blue', alpha=.3)
+    # Add survey points (optional)
+    if plot_survey:
+        id_wire, x_s, y_s, z_s, w_s = np.loadtxt('anode_CYLDCH46.txt', unpack=True) 
+        ax.scatter(x_s[w], y_s[w], z_s[w], marker='.', color='red', alpha=.3)
 
     plt.show()
         
@@ -445,11 +452,8 @@ def survey(geom, matrixCPrime):
     Insert in the C matrix the survey measurements.
     These are not the proper measurements, but are (x, y, z) points at w = +/- 95 cm
     obtained from software computation with CYLDCH 46.
-    50 um error on measurement.
-    We found a discrepancy with the original survey 2021 not due to the definition
-    of our geometry.
+    50 um error on measurements.
     """
-
     id_wire, x_s, y_s, z_s, w_s = np.loadtxt("anode_CYLDCH46.txt", unpack=True)
     for wire, x, y, z, w in zip(id_wire, x_s, y_s, z_s, w_s):
         if int(wire) in good_wires:
@@ -480,7 +484,7 @@ def millepede(geom, data):
     t_start = time.time()
     matrixCPrime = survey(geom, matrixCPrime)
     t_stop = time.time()
-    print(f"Survey inserita in {((t_stop - t_start)/3600):.2f} h...")
+    print(f"Survey inserted in {((t_stop - t_start)/3600):.2f} h...")
     # Loop on event to fill the matrices
     for i, event in enumerate(data):
         t_start = time.time()
@@ -509,7 +513,6 @@ def millepede(geom, data):
 #################           RUN MILLE             ###########################
 #############################################################################
 
-
 GEO_ID = 66 # Geometry ID to start millepede
 ITERATION = 0 # Step of iteration
 outputfilename = f"desy/millepede-ii/mp2meg2_{ITERATION}.bin"
@@ -517,14 +520,14 @@ outputfilename = f"desy/millepede-ii/mp2meg2_{ITERATION}.bin"
 # TTree with cosmics events for millepede
 crtree = TChain("trk")
 crtree.Add(f"residuals_iter_{ITERATION}/outTrack_437*.root")
-print(f"File dei dati aperto... ID Gometria = {GEO_ID}, Step di MillePede = {ITERATION} ...")
+print(f"Data File opened... GEOMETRY ID = {GEO_ID}, MillePede Step = {ITERATION} ...")
 
 t_start = time.time()
 with open(outputfilename, "ab") as aFile:
     for ev in crtree:
         CRTrack(ev, GEO_ID).write_to_binary_file(aFile)
 t_stop = time.time()
-print(f"{outputfilename} prodotto. Tempo impiegato {(t_stop - t_start)/3600 :.1f} h") 
+print(f"{outputfilename} produced. Time needed {(t_stop - t_start)/3600 :.1f} h") 
 
 #############################################################################################
 #
@@ -568,5 +571,3 @@ print("\n--------------------------------------------------------")
 t_stop2 = time.time()
 print(f'{((t_stop2 - t_stop)/3600):.1f} h per terminare MillePede')
 """
-
-
