@@ -285,6 +285,7 @@ class CRTrack() :
         self.glder.tofile(aFile)
         self.inder.tofile(aFile)
 
+
 def write_parameter_file(geom):
     """
     write a params.txt file to be used by Pede.
@@ -292,20 +293,61 @@ def write_parameter_file(geom):
     specified geom ID.
     pre-sigma is 0.0 for every parameter except gamma, which is poorly defined
     """
-    with open("desy/millepede-ii/params.txt", "w") as aFile:
+    with open("desy/millepede-ii/meg2params.txt", "w") as aFile:
         aFile.write("Parameter\n")
         for w in good_wires:
             wire = Wire(geom, w)
-            for i, par in enumerate(wire.alignpars):
-                # define pre-sigma and label of par
+            params = [par for i, par in enumerate(wire.alignpars) if i == 0 or i == 1 or (i > 2 and i < 7)]
+            for i, par in enumerate(params):
                 label = dict_wire_to_label[w] * ALIGN_PARS + i + 1
                 pre_sigma = 0.0
                 if i == 4:
-                    pre_sigma = 0.05 # on gamma add more uncertainty
-                entry = f"{label} {par} {pre_sigma}\n"
-                aFile.write(entry)        
+                    pre_sigma = -1.0 # fix gamma
+                if ALIGN_PARS == 5:
+                    if i < 4:
+                        entry = f"{label} {0.0} {pre_sigma}\n"
+                        aFile.write(entry)
+                    if i > 4:
+                        entry = f"{label - 1} {0.0} {pre_sigma}\n"
+                        aFile.write(entry)
+                elif ALIGN_PARS == 6:
+                    entry = f"{label} {0.0} {pre_sigma}\n"
+                    aFile.write(entry)
 
+def write_constrain_file(geom):
+    """
+    Write constraints on parameters.
+    For each plane, the global shift in x0 and y0 should be zero (for example).
+    """
+    with open("desy/millepede-ii/meg2const.txt", "w") as aFile:
+        # x0 constraints
+        for iplane in range(10):
+            aFile.write("Constraint 0.0")
+            for w in good_wires:
+                if int(w/192) == iplane:
+                    aFile.write(f"{dict_wire_to_label[w] * ALIGN_PARS + 1} 1.0")
+        # y0 constraints
+        for iplane in range(10):
+            aFile.write("Constraint 0.0")
+            for w in good_wires:
+                if int(w/192) == iplane:
+                    aFile.write(f"{dict_wire_to_label[w] * ALIGN_PARS + 2} 1.0")
 
+def write_measurement_file():
+    """
+    Write survey measurements to be used as gaussian constraints
+    on parameters. 50 um sigma.
+    """
+    with open("meg2meas.txt", "w") as aFile:
+        id_wire, x_s, y_s, z_s, w_s = np.loadtxt("anode_CYLDCH46.txt", unpack=True)
+        for wire, x, y, z, w in zip(id_wire, x_s, y_s, z_s, w_s):
+            if int(wire) in good_wires:
+                wire_pars = Wire(66, int(wire)).alignpars
+                # x measurement             
+                aFile.write(f"Measurement {x} {0.005}")
+                # y measurement
+                # z measurement
+                
 ##############################################################
 #                        BELLURIE                            #
 ##############################################################
