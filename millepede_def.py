@@ -218,7 +218,7 @@ class CRHit() :
         self.params = [*wire_params, mx, qx, mz, qz, yt, z_i, di, sigma]
         self.wire = wire
         self.res = fast_res(self.params)
-        self.sigma = sigma
+        self.sigma = 2 * sigma
         self.z_t = yt
         self.der_align = [der(self.params) for der in fast_der_align]
         if not any(self.der_align):
@@ -251,8 +251,8 @@ class CRTrack() :
         							   event.y_track,
         		                                           event.w_wire,
         			 				   event.doca,
-        			 				   event.sigma)
-                     if wire in good_wires] # comment this part to fix the reference of some wires
+        			 				   event.sigma)]
+                     #if wire in good_wires] # comment this part to fix the reference of some wires
 
         # Array format to write on binary file for Pede routine
         self.glder = array.array('f')
@@ -267,7 +267,7 @@ class CRTrack() :
             self.glder.append(hit.sigma)
             self.inder.append(0)
             self.glder.fromlist(hit.der_align)
-            glb_label = [dict_wire_to_label[hit.wire]*ALIGN_PARS + i + 1 for i in range(ALIGN_PARS)] 
+            glb_label = [hit.wire*ALIGN_PARS + i + 1 for i in range(ALIGN_PARS)] #[dict_wire_to_label[hit.wire]*ALIGN_PARS + i + 1 for i in range(ALIGN_PARS)] 
             self.inder.fromlist(glb_label)
 
     def write_to_binary_file(self, aFile):
@@ -293,14 +293,17 @@ def write_parameter_file(geom):
     specified geom ID.
     pre-sigma is 0.0 for every parameter except gamma, which is poorly defined
     """
-    with open("desy/millepede-ii/meg2params.txt", "w") as aFile:
+    with open("meg2params.txt", "w") as aFile:
         aFile.write("Parameter\n")
-        for w in good_wires:
+        for w in range(0, 1920):
             wire = Wire(geom, w)
+            # Select only relevant params for alignment
             params = [par for i, par in enumerate(wire.alignpars) if i == 0 or i == 1 or (i > 2 and i < 7)]
             for i, par in enumerate(params):
-                label = dict_wire_to_label[w] * ALIGN_PARS + i + 1
+                label = w * ALIGN_PARS + i + 1 #dict_wire_to_label[w] * ALIGN_PARS + i + 1
                 pre_sigma = 0.0
+                if not w in good_wires:
+                    pre_sigma = -1.0 # Fix bad wire parameters 
                 if i == 4:
                     pre_sigma = -1.0 # fix gamma
                 if ALIGN_PARS == 5:
@@ -314,24 +317,24 @@ def write_parameter_file(geom):
                     entry = f"{label} {0.0} {pre_sigma}\n"
                     aFile.write(entry)
 
-def write_constrain_file(geom):
+def write_constraint_file():
     """
     Write constraints on parameters.
     For each plane, the global shift in x0 and y0 should be zero (for example).
     """
-    with open("desy/millepede-ii/meg2const.txt", "w") as aFile:
+    with open("meg2const.txt", "w") as aFile:
         # x0 constraints
-        for iplane in range(10):
-            aFile.write("Constraint 0.0")
-            for w in good_wires:
+        for iplane in range(1, 10):
+            aFile.write("Constraint 0.0\n")
+            for w in range(0, 1920):#good_wires:
                 if int(w/192) == iplane:
-                    aFile.write(f"{dict_wire_to_label[w] * ALIGN_PARS + 1} 1.0")
+                    aFile.write(f"{w * ALIGN_PARS + 1} 1.0\n")
         # y0 constraints
-        for iplane in range(10):
-            aFile.write("Constraint 0.0")
-            for w in good_wires:
+        for iplane in range(1, 10):
+            aFile.write("Constraint 0.0\n")
+            for w in range(0, 1920):#good_wires:
                 if int(w/192) == iplane:
-                    aFile.write(f"{dict_wire_to_label[w] * ALIGN_PARS + 2} 1.0")
+                    aFile.write(f"{w * ALIGN_PARS + 2} 1.0\n")
 
 def write_measurement_file():
     """
@@ -342,11 +345,18 @@ def write_measurement_file():
         id_wire, x_s, y_s, z_s, w_s = np.loadtxt("anode_CYLDCH46.txt", unpack=True)
         for wire, x, y, z, w in zip(id_wire, x_s, y_s, z_s, w_s):
             if int(wire) in good_wires:
-                wire_pars = Wire(66, int(wire)).alignpars
-                # x measurement             
+                wire_pars = Wire(66, int(wire)).alignpars # ID 66 = nominal
+                x0 = wire_pars[0]
+                y0 = wire_pars[1]
+                z0 = wire_pars[2]
+                theta = wire_pars[3]
+                phi = wire_pars[4]
+                L = wire_pars[7]
+                # x measurement
                 aFile.write(f"Measurement {x} {0.005}")
                 # y measurement
-                # z measurement
+
+
                 
 ##############################################################
 #                        BELLURIE                            #
@@ -386,7 +396,7 @@ def plot_survey(geom):
     plt.show()
 
 
-def plot_geometry(geom, min_wire=192, max_wire=1920, plot_survey=True):
+def plot_geometry(geom, min_wire=192, max_wire=1920, add_survey=True):
     """
     Plot the Geometry of the Drift Chamber in 3D for all wires between min_wire and max_wire.
     If plot_survey is True, also the US and DS position of the wires as measured in survey are
@@ -403,10 +413,9 @@ def plot_geometry(geom, min_wire=192, max_wire=1920, plot_survey=True):
         y_w = [fast_wire_coord([*w.alignpars, z])[1][0] for z in z_vec]
         ax.plot(x_w, y_w, z_vec, color='pink', alpha=.2)
     # Add survey points (optional)
-    if plot_survey:
+    if add_survey:
         id_wire, x_s, y_s, z_s, w_s = np.loadtxt('anode_CYLDCH46.txt', unpack=True) 
         ax.scatter(x_s[w], y_s[w], z_s[w], marker='.', color='red', alpha=.3)
-
     plt.show()
         
 
@@ -577,15 +586,16 @@ def millepede(geom, data):
 
 GEO_ID = 66 # Geometry ID to start millepede
 ITERATION = 0 # Step of iteration
-outputfilename = f"desy/millepede-ii/mp2meg2_{ITERATION}.bin"
+outputfilename = f"mp2meg2_{ITERATION}.bin"
 
 # TTree with cosmics events for millepede
 crtree = TChain("trk")
-crtree.Add(f"residuals_iter_{ITERATION}/outTrack_437*.root")
-print(f"Data File opened... GEOMETRY ID = {GEO_ID}, MillePede Step = {ITERATION} ...")
+crtree.Add(f"residuals_iter_{ITERATION}/outTrack_4*.root")
+print(f"Data File opened... GEOMETRY ID = {GEO_ID}, MillePede Step = {ITERATION} ...\n")
 
 # Write parameter file for this GEO_ID
 write_parameter_file(GEO_ID)
+write_constraint_file()
 
 # Start Mille
 t_start = time.time()
@@ -593,7 +603,7 @@ with open(outputfilename, "ab") as aFile:
     for ev in crtree:
         CRTrack(ev, GEO_ID).write_to_binary_file(aFile)
 t_stop = time.time()
-print(f"{outputfilename} produced. Time needed {(t_stop - t_start)/3600 :.1f} h") 
+print(f"{outputfilename} produced. Time needed {(t_stop - t_start)/3600 :.1f} h")
 
 #############################################################################################
 #
