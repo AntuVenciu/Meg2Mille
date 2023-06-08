@@ -217,8 +217,9 @@ class CRHit() :
         wire_params = this_wire.alignpars
         self.params = [*wire_params, mx, qx, mz, qz, yt, z_i, di, sigma]
         self.wire = wire
+        self.chi2 = fast_chi2(self.params)
         self.res = fast_res(self.params)
-        self.sigma = 2 * sigma
+        self.sigma = sigma
         self.z_t = yt
         self.der_align = [der(self.params) for der in fast_der_align]
         if not any(self.der_align):
@@ -253,7 +254,7 @@ class CRTrack() :
         			 				   event.doca,
         			 				   event.sigma)]
                      #if wire in good_wires] # comment this part to fix the reference of some wires
-
+        self.chi2 = np.array([hit.chi2 for hit in self.hits]).sum()/(len(self.hits) - 4.) # total chi2/dof
         # Array format to write on binary file for Pede routine
         self.glder = array.array('f')
         self.inder = array.array('i')
@@ -324,13 +325,13 @@ def write_constraint_file():
     """
     with open("meg2const.txt", "w") as aFile:
         # x0 constraints
-        for iplane in range(1, 10):
+        for iplane in range(0, 10):
             aFile.write("Constraint 0.0\n")
             for w in range(0, 1920):#good_wires:
                 if int(w/192) == iplane:
                     aFile.write(f"{w * ALIGN_PARS + 1} 1.0\n")
         # y0 constraints
-        for iplane in range(1, 10):
+        for iplane in range(0, 10):
             aFile.write("Constraint 0.0\n")
             for w in range(0, 1920):#good_wires:
                 if int(w/192) == iplane:
@@ -594,9 +595,9 @@ crtree.Add(f"residuals_iter_{ITERATION}/outTrack_4*.root")
 print(f"Data File opened... GEOMETRY ID = {GEO_ID}, MillePede Step = {ITERATION} ...\n")
 
 # Write parameter file for this GEO_ID
-write_parameter_file(GEO_ID)
+#write_parameter_file(GEO_ID)
 write_constraint_file()
-
+"""
 # Start Mille
 t_start = time.time()
 with open(outputfilename, "ab") as aFile:
@@ -604,7 +605,7 @@ with open(outputfilename, "ab") as aFile:
         CRTrack(ev, GEO_ID).write_to_binary_file(aFile)
 t_stop = time.time()
 print(f"{outputfilename} produced. Time needed {(t_stop - t_start)/3600 :.1f} h")
-
+"""
 #############################################################################################
 #
 #                                     MILLEPEDE IN MY OWN WAY
