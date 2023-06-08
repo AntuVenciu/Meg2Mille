@@ -591,21 +591,21 @@ outputfilename = f"mp2meg2_{ITERATION}.bin"
 
 # TTree with cosmics events for millepede
 crtree = TChain("trk")
-crtree.Add(f"residuals_iter_{ITERATION}/outTrack_4*.root")
+crtree.Add(f"residuals_iter_{ITERATION}/outTrack_*.root")
 print(f"Data File opened... GEOMETRY ID = {GEO_ID}, MillePede Step = {ITERATION} ...\n")
 
 # Write parameter file for this GEO_ID
-#write_parameter_file(GEO_ID)
+write_parameter_file(GEO_ID)
 write_constraint_file()
-"""
+
 # Start Mille
 t_start = time.time()
-with open(outputfilename, "ab") as aFile:
+with open(outputfilename, "wb") as aFile:
     for ev in crtree:
         CRTrack(ev, GEO_ID).write_to_binary_file(aFile)
 t_stop = time.time()
 print(f"{outputfilename} produced. Time needed {(t_stop - t_start)/3600 :.1f} h")
-"""
+
 #############################################################################################
 #
 #                                     MILLEPEDE IN MY OWN WAY
