@@ -10,12 +10,18 @@ the proper matrices for solving the minimization problems
 for the CDCH alignment, accordingly with the MillePede
 strategy. This will be conducted with cosmic rays.
 """
+import os
+os.environ["MKL_NUM_THREADS"] = "1" 
+os.environ["NUMEXPR_NUM_THREADS"] = "1" 
+os.environ["OMP_NUM_THREADS"] = "1" 
+
 import time
 import struct
 import array
 
 from ROOT import TFile, TChain
 import matplotlib.pyplot as plt
+from numpy.linalg import inv
 import numpy as np
 from symengine import lambdify, diff, symbols, sin, cos, Matrix, sqrt # Package for symbolic calc in Python. Based on C and C++
 import sympy as sym # Package for symbolic calc in Python
@@ -35,7 +41,7 @@ def wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi):
     """
     Calculate wire coordinates
     """
-    # parameterization of the wire from coordinate transformation                                                                                                                                                                             
+    # parameterization of the wire from coordinate transformation
     waxis = Matrix([cos(phi)*sin(theta),
                     sin(phi)*sin(theta),
                     cos(theta)])
@@ -50,7 +56,7 @@ def wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi):
     rot = Matrix([[uaxis[0], vaxis[0], waxis[0]],
                   [uaxis[1], vaxis[1], waxis[1]],
                   [uaxis[2], vaxis[2], waxis[2]]])
-    # s point                                                                                                                                                                                                                                 
+    # s point
     sg = sin(gamma)
     cg = cos(gamma)
     sag_v = Matrix([-x0/sqrt(x0*x0 + y0*y0),
@@ -156,8 +162,9 @@ fast_der_align = [fast_der_x0,
                   fast_der_y0,
              	  fast_der_theta,
                   fast_der_phi,
-                  fast_der_gamma,
                   fast_der_s]
+                  #fast_der_gamma,
+                  #fast_der_s]
 
 fast_der_track = [fast_der_mxy,
              	  fast_der_qxy,
@@ -169,7 +176,7 @@ fast_der_track = [fast_der_mxy,
 ####################### GLOBAL VARIABLES ################################
 
 # Definition of dictionary to map wires to a dense vector
-good_wires = np.loadtxt("wire_list.txt", dtype='int', unpack=True) #np.loadtxt("wire_list_CYLDCH35_def.txt", dtype='int', unpack=True)
+good_wires = np.loadtxt("MC_wire_list_iter0.txt", dtype='int', unpack=True) #np.loadtxt("wire_list_CYLDCH35_def.txt", dtype='int', unpack=True)
 idx = np.arange(0, len(good_wires), 1)
 label = np.arange(0, len(good_wires), 1)
 dict_wire_to_label = dict(zip(good_wires, label))
@@ -186,6 +193,10 @@ N_FIT = len(fast_der_track) # number of fit parameters to a line in 3D
 
 ####################### CLASSES FOR DATA HANDLING #########################
 
+GEO_ID = 46 # Geometry ID to start millepede
+
+list_wires_parameters = np.loadtxt(f"wire_parameters_CYLDCH{GEO_ID}.txt") 
+
 class Wire():
     """
     Wire class: contains all the informations about the wire
@@ -195,7 +206,7 @@ class Wire():
     the wire number must be declared.
     """
     def __init__(self, ID, wire):
-        self.alignpars = np.loadtxt(f"wire_parameters_CYLDCH{ID}.txt")[wire]
+        self.alignpars = list_wires_parameters[wire]
 
 class CRHit() :
     """
@@ -227,7 +238,17 @@ class CRHit() :
         self.der_track = [der(self.params) for der in fast_der_track]
         if not any(self.der_track):
             print("Found zeros in local derivatives!")
-
+        # Create chi2 function of one parameter to scan the chi square function
+        """
+        scanning_parameter = np.linspace(-0.1, 0.1, 100)
+        chi2_scan = []
+        for scan in scanning_parameter:
+            hit_params_scan = self.params
+            # replace the desired parameter
+            hit_params_scan[6] = scan
+            chi2_scan.append(fast_chi2(hit_params_scan))
+        self.chi2_scan = np.array(chi2_scan)
+        """
 class CRTrack() :
     """
     Class allowing to handle easily the 
@@ -238,6 +259,7 @@ class CRTrack() :
         """
         creates track and hits
         """
+        tstart = time.time()
         self.hits = [CRHit(ID,
                            wire,
         		   event.GetLeaf("mxz").GetValue(),
@@ -260,17 +282,40 @@ class CRTrack() :
         self.inder = array.array('i')
         self.glder.append(0.)
         self.inder.append(0)
+        if False:
+            for hit in self.hits:
+                self.glder.append(hit.res)
+                self.inder.append(0)
+                self.glder.fromlist(hit.der_track)
+                self.inder.fromlist([1, 2, 3, 4]) # counts from 1 to N_FIT
+                self.glder.append(hit.sigma)
+                self.inder.append(0)
+                self.glder.fromlist(hit.der_align)
+                glb_label = [hit.wire*ALIGN_PARS + i + 1 for i in range(ALIGN_PARS)] #[dict_wire_to_label[hit.wire]*ALIGN_PARS + i + 1 for i in range(ALIGN_PARS)] 
+                self.inder.fromlist(glb_label)
+        # matrix Gamma
+        matrixGamma = np.zeros(shape=(N_FIT, N_FIT))
         for hit in self.hits:
-            self.glder.append(hit.res)
-            self.inder.append(0)
-            self.glder.fromlist(hit.der_track)
-            self.inder.fromlist([1, 2, 3, 4]) # counts from 1 to N_FIT
-            self.glder.append(hit.sigma)
-            self.inder.append(0)
-            self.glder.fromlist(hit.der_align)
-            glb_label = [hit.wire*ALIGN_PARS + i + 1 for i in range(ALIGN_PARS)] #[dict_wire_to_label[hit.wire]*ALIGN_PARS + i + 1 for i in range(ALIGN_PARS)] 
-            self.inder.fromlist(glb_label)
-
+            if hit.chi2 < 1e4:
+                rows = np.array([der_i*hit.der_track/(hit.sigma**2) for der_i in hit.der_track])
+                matrixGamma += rows
+        self.matrixGamma = matrixGamma
+        try:
+            self.Gamma_inv = inv(self.matrixGamma)
+        except np.linalg.LinAlgError:
+            self.Gamma_inv = np.zeros(shape=(N_FIT, N_FIT))
+        # matrix G
+        matrixG = np.zeros(shape=(N_ALIGN, N_FIT))
+        for hit in self.hits:
+            if hit.chi2 < 1e4:
+                if hit.wire in good_wires:
+                    wire = dict_wire_to_idx[hit.wire]
+                    rows = np.array([der_i * hit.der_track / (hit.sigma**2) for der_i in hit.der_align])
+                    matrixG[wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS, : ] += rows
+        self.matrixG = matrixG
+        tstop = time.time()
+        print(f"{tstop - tstart:.4f} s to initialize a track.")
+        
     def write_to_binary_file(self, aFile):
         """
         Writes the output binary file to submit to Pede routine
@@ -294,7 +339,7 @@ def write_parameter_file(geom):
     specified geom ID.
     pre-sigma is 0.0 for every parameter except gamma, which is poorly defined
     """
-    with open("meg2params.txt", "w") as aFile:
+    with open("meg2params_mc.txt", "w") as aFile:
         aFile.write("Parameter\n")
         for w in range(0, 1920):
             wire = Wire(geom, w)
@@ -323,7 +368,7 @@ def write_constraint_file():
     Write constraints on parameters.
     For each plane, the global shift in x0 and y0 should be zero (for example).
     """
-    with open("meg2const.txt", "w") as aFile:
+    with open("meg2const_mc.txt", "w") as aFile:
         # x0 constraints
         for iplane in range(0, 10):
             aFile.write("Constraint 0.0\n")
@@ -346,7 +391,7 @@ def write_measurement_file():
         id_wire, x_s, y_s, z_s, w_s = np.loadtxt("anode_CYLDCH46.txt", unpack=True)
         for wire, x, y, z, w in zip(id_wire, x_s, y_s, z_s, w_s):
             if int(wire) in good_wires:
-                wire_pars = Wire(66, int(wire)).alignpars # ID 66 = nominal
+                wire_pars = Wire(46, int(wire)).alignpars # ID 46 = nominal, 66 = with 0.1 mm sagittaa
                 x0 = wire_pars[0]
                 y0 = wire_pars[1]
                 z0 = wire_pars[2]
@@ -373,7 +418,7 @@ def plot_survey(geom):
     id_wire, x_s, y_s, z_s, w_s = np.loadtxt("anode_CYLDCH46.txt", unpack=True)
     for wire, x, y, z, w in zip(id_wire, x_s, y_s, z_s, w_s):
         if int(wire) in good_wires:
-            event = [CRHit(66,
+            event = [CRHit(46,
                            int(wire),
                            0.,
                            x,
@@ -435,8 +480,9 @@ def calculateGamma(event):
     """
     matrixGamma = np.zeros(shape=(N_FIT, N_FIT))
     for hit in event:
-        rows = np.array([der_i*hit.der_track/(hit.sigma**2) for der_i in hit.der_track])
-        matrixGamma += rows
+        if hit.chi2 < 1e4:
+            rows = np.array([der_i*hit.der_track/(hit.sigma**2) for der_i in hit.der_track])
+            matrixGamma += rows
     return matrixGamma
 
 def calculateG(event):
@@ -444,13 +490,16 @@ def calculateG(event):
     G is the matrix containing dervatives with
     respect to both track and alignment parameters.
     """
+    tstart = time.time()
     matrixG = np.zeros(shape=(N_ALIGN, N_FIT))
     for hit in event:
-        if hit.wire in good_wires:
-            wire = dict_wire_to_idx[hit.wire]
-            rows = np.array([der_i * hit.der_track / (hit.sigma**2) for der_i in hit.der_align])
-            matrixG[wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS, : ] += rows
-
+        if hit.chi2 < 1e4:
+            if hit.wire in good_wires:
+                wire = dict_wire_to_idx[hit.wire]
+                rows = np.array([der_i * hit.der_track / (hit.sigma**2) for der_i in hit.der_align])
+                matrixG[wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS, : ] += rows
+    tstop = time.time()
+    print(f"{tstop - tstart:.4f} s for CalculateG")
     return matrixG
 
 def calculateB(event):
@@ -459,10 +508,10 @@ def calculateB(event):
     """
     vectorB = np.zeros(N_ALIGN)
     for hit in event:
-        if hit.wire in good_wires:
-            wire = dict_wire_to_idx[hit.wire]
-            vectorB[wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS] += hit.der_align * hit.res / (hit.sigma**2)
-
+        if hit.chi2 < 1e4:
+            if hit.wire in good_wires:
+                wire = dict_wire_to_idx[hit.wire]
+                vectorB[wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS] += hit.der_align * hit.res / (hit.sigma**2)
     return vectorB
 
 def calculateBeta(event):
@@ -471,8 +520,9 @@ def calculateBeta(event):
     """
     vectorBeta = np.zeros(N_FIT)
     for hit in event:
-        #if hit.wire in good_wires: #uncomment if no wires is fixed
-        vectorBeta += hit.der_track * hit.res / (hit.sigma**2)
+        if hit.chi2 < 1e4:
+            #if hit.wire in good_wires: #uncomment if no wires is fixed
+            vectorBeta += hit.der_track * hit.res / (hit.sigma**2)
     return vectorBeta
 
 def calculateC(event):
@@ -480,13 +530,17 @@ def calculateC(event):
     C is the matrix with derivatives with respect
     to the alignment parameters.
     """
+    tstart = time.time()
     matrixC = np.zeros(shape=(N_ALIGN, N_ALIGN))
     for hit in event:
-        if hit.wire in good_wires:
-            wire = dict_wire_to_idx[hit.wire]
-            rows = np.array([der_i*hit.der_align / (hit.sigma**2) for der_i in hit.der_align])
-            matrixC[wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS, wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS] += rows
-            #print(f"Updated C in position of wire {wire} with {rows}")
+        if hit.chi2 < 1e4:
+            if hit.wire in good_wires:
+                wire = dict_wire_to_idx[hit.wire]
+                rows = np.array([der_i*hit.der_align / (hit.sigma**2) for der_i in hit.der_align])
+                matrixC[wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS, wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS] += rows
+                #print(f"Updated C in position of wire {wire} with {rows}")
+    tstop = time.time()
+    print(f"{tstop - tstart:.4f} s for CalculateC")
     return matrixC
 
 def calculateCPrime(matrixCPrime, event):
@@ -494,11 +548,17 @@ def calculateCPrime(matrixCPrime, event):
     CPrime is the matrix to invert, with both misalignment
     and track fitting parameters.
     """
-    G = calculateG(event)
-    C = calculateC(event)
+    G = event.matrixG #calculateG(event)
+    C = calculateC(event.hits)
     try:
-        Gamma_inv = np.linalg.inv(calculateGamma(event))
-        matrixCPrime += C - (G @ Gamma_inv) @ G.T
+        tstart = time.time()
+        Gamma_inv = event.Gamma_inv #inv(calculateGamma(event))
+        tstop = time.time()
+        print(f"{tstop - tstart:.4f} s for Gamma inversion")
+        CorrectionMatrix = - (G @ Gamma_inv) @ G.T
+        tstop2 = time.time()
+        print(f"{tstop2 - tstop:.4f} s for updating matrixCPrime")
+        matrixCPrime += C + CorrectionMatrix
     except np.linalg.LinAlgError:
         print("Error in Gamma inversion...")
         matrixCPrime += C
@@ -508,11 +568,11 @@ def calculateBPrime(vectorBPrime, event):
     """
     Is the vector with the track and alignment residuals.
     """
-    G = calculateG(event)
-    b = calculateB(event)
-    beta = calculateBeta(event)
+    G = event.matrixG #calculateG(event)
+    b = calculateB(event.hits)
+    beta = calculateBeta(event.hits)
     try:
-        Gamma_inv = np.linalg.inv(calculateGamma(event))
+        Gamma_inv = event.Gamma_inv #inv(calculateGamma(event))
         vectorBPrime += b - G @ (Gamma_inv @ beta)
     except np.linalg.LinAlgError:
         print("Error in Gamma inversion...")
@@ -539,9 +599,12 @@ def survey(geom, matrixCPrime):
                            w,
                            0,
                            0.005)]
+            #print("End calculation Survey measurements...")
+            tstart = time.time()
             C = calculateC(event)
             matrixCPrime += C
-
+            tstop = time.time()
+            print(f"{tstop - tstart:.4f} s to calculate a C Matrix")
     return matrixCPrime
 
 def millepede(geom, data):
@@ -554,15 +617,16 @@ def millepede(geom, data):
     vectorBPrime = np.zeros(N_ALIGN)
     # Insert survey measurements 
     t_start = time.time()
-    matrixCPrime = survey(geom, matrixCPrime)
+    #matrixCPrime = survey(geom, matrixCPrime)
     t_stop = time.time()
     print(f"Survey inserted in {((t_stop - t_start)/3600):.2f} h...")
     # Loop on event to fill the matrices
     for i, event in enumerate(data):
         t_start = time.time()
-        matrixCPrime = calculateCPrime(matrixCPrime, event.hits)
-        vectorBPrime = calculateBPrime(vectorBPrime, event.hits)
+        matrixCPrime = calculateCPrime(matrixCPrime, event)
+        vectorBPrime = calculateBPrime(vectorBPrime, event)
         t_stop = time.time()
+        print(f"{t_stop - t_start:.4f} s to do Cprime and Bprime for one event")
         if i%10000 == 0:
             print(f"Evento {i}")
 
@@ -576,7 +640,7 @@ def millepede(geom, data):
         print("CPrime Matrix NOT POS DEF ...")
 
     # Final matrix inversion
-    matrixCPrimeInverted = np.linalg.inv(matrixCPrime)
+    matrixCPrimeInverted = inv(matrixCPrime)
 
     return matrixCPrimeInverted @ vectorBPrime
 
@@ -585,15 +649,26 @@ def millepede(geom, data):
 #################           RUN MILLE             ###########################
 #############################################################################
 
-GEO_ID = 66 # Geometry ID to start millepede
 ITERATION = 0 # Step of iteration
-outputfilename = f"mp2meg2_{ITERATION}.bin"
+outputfilename = f"mp2meg2_MC.bin"
 
 # TTree with cosmics events for millepede
 crtree = TChain("trk")
-crtree.Add(f"residuals_iter_{ITERATION}/outTrack_*.root")
-print(f"Data File opened... GEOMETRY ID = {GEO_ID}, MillePede Step = {ITERATION} ...\n")
+inputfiles = f"residuals_iter_{ITERATION}/outTrack_*.root"
+mcinput = f"mc/MCTrack*minchi2.root"
+#crtree.Add(mcinput)
+crtree.Add("mc/MCTrack_0_minchi2.root")
+#crtree.Add("mc/MCTrack_10000_minchi2.root")
+#crtree.Add("mc/MCTrack_20000_minchi2.root")
+#crtree.Add("mc/MCTrack_30000_minchi2.root")
+#crtree.Add("mc/MCTrack_40000_minchi2.root")
+#crtree.Add("mc/MCTrack_50000_minchi2.root")
+#crtree.Add("mc/MCTrack_60000_minchi2.root")
+#crtree.Add("mc/MCTrack_70000_minchi2.root")
+#crtree.Add("mc/MCTrack_80000_minchi2.root")
 
+print(f"Data File opened... GEOMETRY ID = {GEO_ID}, MillePede Step = {ITERATION} ...\n")
+"""
 # Write parameter file for this GEO_ID
 write_parameter_file(GEO_ID)
 write_constraint_file()
@@ -602,25 +677,125 @@ write_constraint_file()
 t_start = time.time()
 with open(outputfilename, "wb") as aFile:
     for ev in crtree:
-        CRTrack(ev, GEO_ID).write_to_binary_file(aFile)
+        a_track = CRTrack(ev, GEO_ID)
+        chi2 = a_track.chi2
+        #print(f"chi2 = {chi2}")
+        if chi2 > 1e-5 and chi2 < 5:
+            a_track.write_to_binary_file(aFile)
+
 t_stop = time.time()
 print(f"{outputfilename} produced. Time needed {(t_stop - t_start)/3600 :.1f} h")
-
+"""
 #############################################################################################
 #
 #                                     MILLEPEDE IN MY OWN WAY
 #
 ############################################################################################
-"""
+
 
 # Create events
 t_start = time.time()
 events = [CRTrack(ev, GEO_ID) for ev in crtree]
+# Get the chi2 scan for the sagitta parameter of some wires
+"""
+chi2_scan_sag1009 = np.zeros(100)
+chi21009 = []
+count1009 = 0
+chi2_scan_sag1234 = np.zeros(100)
+count1234 = 0
+chi21234 = []
+chi2_scan_sag955 = np.zeros(100)
+count955 = 0
+chi2955 = []
+chi2_scan_sag634 = np.zeros(100)
+count634 = 0
+chi2634 = []
+chi2_scan_sag580 = np.zeros(100)
+count580 = 0
+chi2580 = []
+
+for track in events:
+    for hit in track.hits:
+        if hit.wire == 1009:
+            chi2_scan_sag1009 += hit.chi2_scan
+            count1009 += 1
+            chi21009.append(hit.chi2_scan.sum())
+        if hit.wire == 1234:
+            chi2_scan_sag1234 += hit.chi2_scan
+            count1234 += 1
+            chi21234.append(hit.chi2_scan.sum())
+        if hit.wire == 955:
+            chi2_scan_sag955 += hit.chi2_scan
+            count955 += 1
+            chi2955.append(hit.chi2_scan.sum())
+        if hit.wire == 634:
+            chi2_scan_sag634 += hit.chi2_scan
+            count634 += 1
+            chi2634.append(hit.chi2_scan.sum())
+        if hit.wire == 580:
+            chi2_scan_sag580 += hit.chi2_scan
+            count580 += 1
+            chi2580.append(hit.chi2_scan.sum())
+"""
+
 t_stop = time.time()
 print(f"{len(events)} eventi letti... tempo impiegato {(t_stop - t_start)/3600 :.1f} h")
 
+#print(f"580 {count580}, 634 {count634}, 955 {count955}, 1234 {count1234}, 1009 {count1009}")
+
+# Plot profile of chi2
+"""
+plt.figure(1)
+plt.subplot(121)
+plt.title(r"$\chi^2$ scan wire 1009")
+plt.xlabel("Sag [cm]")
+plt.ylabel(r"$\chi^2$")
+plt.plot(np.linspace(-0.1, 0.1, 100), chi2_scan_sag1009)
+plt.subplot(122)
+plt.hist(chi21009, bins=100)
+
+plt.figure(2)
+plt.subplot(121)
+plt.title(r"$\chi^2$ scan wire 1234")
+plt.xlabel("Sag [cm]")
+plt.ylabel(r"$\chi^2$")
+plt.plot(np.linspace(-0.1, 0.1, 100), chi2_scan_sag1234)
+plt.subplot(122)
+plt.hist(chi21234, bins=100)
+
+
+plt.figure(3)
+plt.subplot(121)
+plt.title(r"$\chi^2$ scan wire 955")
+plt.xlabel("Sag [cm]")
+plt.ylabel(r"$\chi^2$")
+plt.plot(np.linspace(-0.1, 0.1, 100), chi2_scan_sag955)
+plt.subplot(122)
+plt.hist(chi2955, bins=100)
+
+plt.figure(5)
+plt.subplot(121)
+plt.title(r"$\chi^2$ scan wire 634")
+plt.xlabel("Sag [cm]")
+plt.ylabel(r"$\chi^2$")
+plt.plot(np.linspace(-0.1, 0.1, 100), chi2_scan_sag634)
+plt.subplot(122)
+plt.hist(chi2634, bins=100)
+
+plt.figure(6)
+plt.subplot(121)
+plt.title(r"$\chi^2$ scan wire 580")
+plt.xlabel("Sag [cm]")
+plt.ylabel(r"$\chi^2$")
+plt.plot(np.linspace(-0.1, 0.1, 100), chi2_scan_sag580)
+plt.subplot(122)
+plt.hist(chi2580, bins=100)
+
+plt.show()
+"""
+
 # MillePede
-    
+outputfile_name = "test_cancella.txt" #"mc_results_millepede_chi2cut1e4.txt"
 try:
     results = millepede(GEO_ID, events)
     print("------------- MILLEPEDE INVERTED MATRIX ---------------- \n")
@@ -647,4 +822,3 @@ print("\n--------------------------------------------------------")
 
 t_stop2 = time.time()
 print(f'{((t_stop2 - t_stop)/3600):.1f} h per terminare MillePede')
-"""
