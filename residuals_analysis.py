@@ -9,11 +9,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-WRITE_WIRE_LIST = 0
+WRITE_WIRE_LIST = 1
 
 # iteration of millepede
 ITERATION = 0
-directory = f"residuals_iter_{ITERATION}"
+directory = "mc" #f"residuals_iter_{ITERATION}"
 
 # residuals and wire list
 wires = np.array([])
@@ -23,26 +23,26 @@ xres = np.array([])
 yres = np.array([])
 
 # Loop over all files res_437*.txt in the directory
-for res_file in glob.iglob(f"{directory}/res_*iter0.txt"):
+for res_file in glob.iglob(f"{directory}/res_MC*.txt"):
     if os.path.getsize(res_file) < 1000:
         continue
-    doca, res, sigma, z, x, y, wire = np.loadtxt(res_file, unpack=True)
+    doca, res, sigma, z, wire = np.loadtxt(res_file, unpack=True)
     wires = np.append(wires, wire)
     dres = np.append(dres, res)
     zvec = np.append(zvec, z)
-    xres = np.append(xres, x)
-    yres = np.append(yres, y)
+    #xres = np.append(xres, x)
+    #yres = np.append(yres, y)
 
 if WRITE_WIRE_LIST:
     # Count hits on wire to establish good wires (with > 50 hits) to be aligned
     wire_list = np.zeros(1920)
     for w in wires:
         wire_list[int(w)] += 1
-    with open(f"wire_list_iter{ITERATION}.txt", "w") as f:
+    with open(f"MC_wire_list_iter{ITERATION}.txt", "w") as f:
         for w, entries in enumerate(wire_list):
             if entries > 50:
                 f.write(f"{w}\n")
-    print(f"Created file wire_list_iter{ITERATION}.txt")
+    print(f"Created file MC_wire_list_iter{ITERATION}.txt")
 
 # Create the histograms of residuals per layer and per wire
 plt.figure(1)
@@ -51,8 +51,8 @@ for i in range(1, 10, 1):
     plt.xlim(0, 192)
     plt.ylim(-0.1, 0.1)
     plt.hist2d(wires[wires%10 == i]%192, dres[wires%10 == i], bins=[192, 100], range=[[-0.5, 192.5], [-0.1, 0.1]])
-plt.savefig(f"residuals_plane_per_plane_iter{ITERATION}.pdf")
-
+plt.savefig(f"MC_residuals_plane_per_plane_iter{ITERATION}.pdf")
+"""
 wire_list = np.zeros(1920)
 for w in wires:
     wire_list[int(w)] += 1
@@ -69,7 +69,7 @@ for w in wires:
         found += 1
 
 # ROOOT CODE
-"""
+
 for x, z, w in zip(xres, zvec, wires):
     if w != wires_plot[0]:
         continue
@@ -82,7 +82,9 @@ prof = hxresz.ProfileX("pfx", 1, -1, "dsame")
 prof.SetMarkerStyle(20)
 prof.SetMarkerSize(1)
 c.SaveAs("test.pdf")
-"""
+
+
+
 
 # Histogram of residuals VS z for four "average" wires
 plt.figure(2)
@@ -115,4 +117,4 @@ plt.hist(dres, bins=100, range=(-0.15, 0.15))
 plt.savefig(f"doca_res_iter{ITERATION}.pdf")
 
 plt.show()
-
+"""
