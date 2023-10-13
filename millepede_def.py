@@ -22,7 +22,7 @@ import array
 
 from ROOT import TChain, TFile, gInterpreter, TH1D
 # Load trk library
-gInterpreter.ProcessLine('#include "cosmics_includes.h"')
+gInterpreter.ProcessLine('#include "cosmics_includes_newGeo.h"')
 
 import matplotlib.pyplot as plt
 from numpy.linalg import inv
@@ -61,6 +61,7 @@ def wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi):
                   [uaxis[1], vaxis[1], waxis[1]],
                   [uaxis[2], vaxis[2], waxis[2]]])
     # s point
+    """
     sg = sin(gamma)
     cg = cos(gamma)
     sag_v = Matrix([-x0/sqrt(x0*x0 + y0*y0),
@@ -79,7 +80,8 @@ def wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi):
                       waxis[2]**2*(1-cg) + cg]])
     sag_v = rot_m * sag_v
     sag = s * ((zi*2/L)**2 - 1)
-    pos0 = wirepos + sag * sag_v
+    """
+    pos0 = wirepos #+ sag * sag_v
     
     pos = Matrix([0, 0, zi])
     a_wire = pos0 + rot*pos
@@ -110,27 +112,28 @@ def z_wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi):
 def res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i):
     """
     Calculates the correction to global chi square from a given data point.
+    Use only a linear geometry for the wire.
     """
-    # parameterization of the wire from coordinate transformation
-    a_wire = wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi)
     # parameterization of the track
-    # Calculate yt, the intersection point of the line with the drift plane
     line_vector = Matrix([mxy,
                           1,
                           myz])
     line_origin = Matrix([qxy,
                           0,
                           qyz])
+    # Point on wire and wire vector
     wire_vector = Matrix([cos(phi)*sin(theta),
                     sin(phi)*sin(theta),
                     cos(theta)])
-    yt = (a_wire - line_origin).dot(wire_vector) / (line_vector.dot(wire_vector))
-    # Track interesection point
-    a_track = Matrix([mxy*yt + qxy,
-                      yt,
-                      myz*yt + qyz])
+    point_on_wire = wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi)
+    # The distance of closest approach between wire and line is given by:
+    # doca = |n . (point_on_line - point_on_wire)| / |n|
+    # n is the vector perpendicular to both line and wire: n = wire_vector x line_origin
+    n = wire_vector.cross(line_vector)
+    doca = sqrt( (n.dot(point_on_wire - line_origin))**2 / (n.dot(n)))
+    
     # Return the hit residual
-    return sqrt((a_track - a_wire).dot(a_track - a_wire)) - ti
+    return ti - doca
 
 # Chi squared function calculation
 def chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i):
@@ -138,7 +141,7 @@ def chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi
     Calculates the correction to global chi square from a given data point.
     """
     a_res = res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i)
-    return 0.5 * a_res**2 / sigma_i**2
+    return a_res**2 / sigma_i**2
 
 #In order to make calculation fast, the chi 2 function and its derivatives must be lambdified.
 fast_chi2 = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i)])
@@ -161,12 +164,13 @@ fast_der_qyz = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, q
 
 fast_wire_coord = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi], [wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi)])
 
-# lists storing derivatives
+# lists storing derivatives:
+# do not use s for line wires
+# do not use gamma at first iteration, when wires are initially straight
 fast_der_align = [fast_der_x0,
                   fast_der_y0,
              	  fast_der_theta,
-                  fast_der_phi,
-                  fast_der_s]
+                  fast_der_phi]
                   #fast_der_gamma,
                   #fast_der_s]
 
@@ -229,6 +233,7 @@ class CRHit() :
                  sigma) :
         this_wire = Wire(ID, wire)
         wire_params = this_wire.alignpars
+        #print(f"wire {wire} vector = {np.sin(wire_params[3])*np.cos(wire_params[4]):.4f}, {np.sin(wire_params[3]*np.sin(wire_params[4])):.4f}, {np.cos(wire_params[3]):.4f}")
         self.params = [*wire_params, mx, qx, mz, qz, z_i, di, sigma]
         self.wire = wire
         self.chi2 = fast_chi2(self.params)
@@ -236,6 +241,7 @@ class CRHit() :
         self.x = fast_x([*wire_params, z_i])
         self.y = fast_y([*wire_params, z_i])
         self.z = fast_z([*wire_params, z_i])
+        #print(f"wire {wire} position at {z_i} = {self.x:.4f} {self.y:.4f} {self.z:.4f}")
         #print("Residual =", self.res)
         self.sigma = sigma
         self.der_align = [der(self.params) for der in fast_der_align]
@@ -274,18 +280,17 @@ class CRTrack() :
         """
         self.hits = [CRHit(ID,
                            wire,
-        		           event.GetLeaf("mxz").GetValue(),
-        		           event.GetLeaf("qxz").GetValue(),
+        		           event.GetLeaf("mxy").GetValue(),
+        		           event.GetLeaf("qxy").GetValue(),
         		           event.GetLeaf("myz").GetValue(),
         		           event.GetLeaf("qyz").GetValue(),
-        		           z_wire,
+        		           0.,
         		           doca,
         		           sigma)
-                     for wire, z_wire, doca, sigma in zip(event.wire,
-                                                          event.w_wire,
-                                                          event.doca,
-                                                          event.sigma)
-                     if abs(z_wire) < 90]
+                     for wire, doca, sigma in zip(event.wire,
+                                                  event.doca,
+                                                  event.sigma)]
+        #print(f'Track pars : xi = {event.GetLeaf("mxy").GetValue()}, x0 = {event.GetLeaf("qxy").GetValue()}, eta = {event.GetLeaf("myz").GetValue()}, z0 = {event.GetLeaf("qyz").GetValue()}')
                      #if wire in good_wires] # comment this part to fix the reference of some wires
         if len(self.hits) < 5:
             self.chi2 = 1e30
@@ -663,8 +668,8 @@ def millepede(geom, tree):
         event = CRTrack(entry, geom)
         #h.Fill(event.chi2)
         
-        if event.chi2 > 3:
-            print("chi2 > 3")
+        if event.chi2 > 5:
+            print("chi2 > 5")
             del event
             #gc.collect()
             continue
@@ -703,23 +708,23 @@ outputfilename = f"mp2meg2_MC_0509.bin"
 # TTree with cosmics events for millepede
 crtree = TChain("trk")
 inputfiles = f"residuals_iter_{ITERATION}/outTrack_*.root"
-mcinput = f"mc/MCTrack*minchi2.root"
+mcinput = f"mc/MCTrack_lineWire*.root"
 #crtree.Add(mcinput)
-crtree.Add("mc/MCTrack_0_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_10000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_20000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_30000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_40000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_50000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_60000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_70000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_80000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_90000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_100000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_110000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_120000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_130000_minchi2_newGeo.root")
-crtree.Add("mc/MCTrack_140000_minchi2_newGeo.root")
+crtree.Add("mc/MCTrack_lineWire_0.root")
+crtree.Add("mc/MCTrack_lineWire_1.root")
+#crtree.Add("mc/MCTrack_lineWire_2.root")
+#crtree.Add("mc/MCTrack_30000_minchi2_newGeo.root")
+#crtree.Add("mc/MCTrack_40000_minchi2_newGeo.root")
+#crtree.Add("mc/MCTrack_50000_minchi2_newGeo.root")
+#crtree.Add("mc/MCTrack_60000_minchi2_newGeo.root")
+#crtree.Add("mc/MCTrack_70000_minchi2_newGeo.root")
+#crtree.Add("mc/MCTrack_80000_minchi2_newGeo.root")
+#crtree.Add("mc/MCTrack_90000_minchi2_newGeo.root")
+#crtree.Add("mc/MCTrack_100000_minchi2_newGeo.root")
+#crtree.Add("mc/MCTrack_110000_minchi2_newGeo.root")
+#crtree.Add("mc/MCTrack_120000_minchi2_newGeo.root")
+#crtree.Add("mc/MCTrack_130000_minchi2_newGeo.root")
+#crtree.Add("mc/MCTrack_140000_minchi2_newGeo.root")
 
 print(f"Data File opened... GEOMETRY ID = {GEO_ID}, MillePede Step = {ITERATION} ...")
 
@@ -854,19 +859,23 @@ plt.show()
 
 
 # MillePede
-outputfile_name = "mc_results_millepede_newGeo.txt"
+outputfile_name = f"mc_results_millepede_lineWire_noSurvey_noFixed_chi25_events100k.txt"
 try:
     results = millepede(GEO_ID, crtree)
     print("------------- MILLEPEDE INVERTED MATRIX ---------------- \n")
     print(results)
     # Write results
     with open(outputfile_name, "w") as f:
+        if ALIGN_PARS==4:
+            f.write('#dx0 #dy0 #dth #dph\n')
         if ALIGN_PARS == 5:
             f.write('#dx0 #dy0 #dth #dph #ds\n')
         elif ALIGN_PARS == 6:
             f.write('#dx0 #dy0 #dth #dph #dgamma #ds\n')
         for i in range(int(len(results)/ALIGN_PARS)):
             entry = ""
+            if ALIGN_PARS == 4:
+                entry = f'{results[i*4]} {results[i*4+1]} {results[i*4+2]} {results[i*4+3]}\n'
             if ALIGN_PARS == 5:
                 entry = f'{results[i*5]} {results[i*5+1]} {results[i*5+2]} {results[i*5+3]} {results[i*5+4]}\n'
             if ALIGN_PARS == 6:
