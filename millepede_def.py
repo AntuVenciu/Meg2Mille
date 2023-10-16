@@ -27,6 +27,7 @@ gInterpreter.ProcessLine('#include "cosmics_includes_newGeo.h"')
 import matplotlib.pyplot as plt
 from numpy.linalg import inv, norm
 import numpy as np
+from scipy.optimize import curve_fit
 from symengine import lambdify, diff, symbols, sin, cos, Matrix, sqrt # Package for symbolic calc in Python. Based on C and C++
 import sympy as sym # Package for symbolic calc in Python
 
@@ -46,7 +47,7 @@ def der_mxy(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz,
     Exact derivative of chi2 with respect to mxy
     """
     w = np.array([np.cos(phi)*np.sin(theta),
-                  np.sin(theta)*np.sin(phi),
+                  np.sin(phi)*np.sin(theta),
                   np.cos(theta)])
     w0 = np.array([x0,
                    y0,
@@ -62,10 +63,45 @@ def der_mxy(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz,
     diff_pos = w0 - x0
     numerator = np.dot(n, diff_pos)
     doca = np.sqrt((numerator / n_mag)**2)
-    residual = (ti - doca - 0.00001 + np.random.uniform(0.00002))/sigma_i
+    print(f"doca = {doca:.6f} - dmeas = {ti:.6f}")
+    residual = (ti - doca)/sigma_i
     derivative = (1./doca) * ((numerator*(w[2]*diff_pos[1] - w[1]*diff_pos[2])*n_mag**2 - (numerator**2)*(n[1]*w[2] - n[2]*w[1]))/(n_mag**4))
     return - 2. * residual * (1. / sigma_i) * derivative
-    
+
+def draw_scan_mxy(track):
+    """
+    Draw the scanning of the chi2 function as a function of the mxy parameter
+    """
+    mxy0 = ((track.hits[0]).get_params())[10]
+    print("Initial value of mxy =", mxy0)
+    dm = np.linspace(-0.000001 * mxy0 + mxy0, 0.000001 * mxy0 + mxy0, 100)
+    chi2_vec = []
+    true_chi2 = track.chi2 * (len(track.hits) - 4.)
+    der = track.der_loc
+    for x in dm:
+        chi2 = 0
+        for hit in track.hits:
+            parameters = hit.get_params()
+            parameters[10] = x
+            chi2 += (fast_chi2(parameters))
+        chi2_vec.append(chi2)
+    diff_fin = []
+    for i in range(1, len(chi2_vec), 1):
+        idx = int(i)
+        delta = dm[i] - dm[i - 1]
+        diff_fin.append((chi2_vec[i] - chi2_vec[i-1]) / delta)
+    plt.figure(1)
+    plt.subplot(211)
+    plt.errorbar(dm, np.array(chi2_vec), fmt='.', color='blue')
+    plt.errorbar(mxy0, true_chi2, fmt='*', color='red', label='Best fit')
+    plt.plot(dm, np.array(chi2_vec), linestyle='--', color='orange')
+    plt.grid(True)
+    plt.subplot(212)
+    plt.errorbar(dm[1:], np.array(diff_fin), fmt='.', linestyle='dotted', color='black')
+    plt.grid(True)
+    plt.legend()
+
+    plt.show()
 
 # Definition of wire geometry
 def wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi):
@@ -109,7 +145,7 @@ def wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi):
     sag = s * ((zi*2/L)**2 - 1)
     """
     pos0 = wirepos #+ sag * sag_v
-    
+
     pos = Matrix([0, 0, zi])
     a_wire = pos0 + rot*pos
     return a_wire
@@ -190,10 +226,10 @@ fast_der_phi = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, q
 fast_der_gamma = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), gamma, 1)])
 fast_der_s = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), s, 1)])
 fast_der_L = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), L, 1)])
-fast_der_mxy = lambdify([x0, y0, z0,theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), mxy, 1)])
-fast_der_qxy = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), qxy, 1)])
-fast_der_myz = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), myz, 1)])
-fast_der_qyz = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), qyz, 1)])
+fast_der_mxy = lambdify([x0, y0, z0,theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), mxy, 1)])
+fast_der_qxy = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), qxy, 1)])
+fast_der_myz = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), myz, 1)])
+fast_der_qyz = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), qyz, 1)])
 
 fast_wire_coord = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi], [wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi)])
 
@@ -236,7 +272,7 @@ N_FIT = len(fast_der_track) # number of fit parameters to a line in 3D
 
 GEO_ID = 46 # Geometry ID to start millepede
 
-list_wires_parameters = np.loadtxt(f"wire_parameters_CYLDCH{GEO_ID}.txt") 
+list_wires_parameters = np.loadtxt(f"wire_parameters_CYLDCH{GEO_ID}.txt")
 
 class Wire():
     """
@@ -264,47 +300,73 @@ class CRHit() :
                  z_i,
                  di,
                  sigma) :
-        this_wire = Wire(ID, wire)
-        wire_params = this_wire.alignpars
-        #print(f"wire {wire} vector = {np.sin(wire_params[3])*np.cos(wire_params[4]):.4f}, {np.sin(wire_params[3]*np.sin(wire_params[4])):.4f}, {np.cos(wire_params[3]):.4f}")
-        self.params = [*wire_params, mx, qx, mz, qz, z_i, di, sigma]
-        self.wire = wire
-        self.chi2 = fast_chi2(self.params)
-        self.res = fast_res(self.params)
-        self.x = fast_x([*wire_params, z_i])
-        self.y = fast_y([*wire_params, z_i])
-        self.z = fast_z([*wire_params, z_i])
-        #print(f"wire {wire} position at {z_i} = {self.x:.4f} {self.y:.4f} {self.z:.4f}")
-        print(f"Residual = {self.res:.4f}")
-        self.sigma = sigma
-        self.der_test = der_mxy(*self.params)
-        self.der_align = [der(self.params) for der in fast_der_align]
-        #print("Derivatives of alingment parameters", self.der_align)
-        if not any(self.der_align):
-            print("Found zeros in GLB derivatives!")
-        self.der_track = [der(self.params) for der in fast_der_track]
-        #print("Derivatives of track params", self.der_track)
-        if not any(self.der_track):
-            print("Found zeros in local derivatives!")
-        # Create chi2 function of one parameter to scan the chi square function
-        """
-        scanning_parameter = np.linspace(-0.01, 0.01, 100)
-        chi2_scan = []
-        hit_params_scan = self.params
-        for scan in scanning_parameter:
-            # replace the desired parameter
-            #print(f"hit_params + scan = {self.params[6]:.4f} + {scan:.4f}")
-            hit_params_scan[6] = scan
-            #if self.chi2 < 3:
-            chi2_scan.append(fast_chi2(hit_params_scan))
-            #break
-        #print(f"Parameters =", self.params)
-        self.chi2_scan = np.array(chi2_scan)
-        """
+        self._this_wire = Wire(ID, wire)
+        self._wire_params = self._this_wire.alignpars
+        self._params = [*self._wire_params, mx, qx, mz, qz, z_i, di, sigma]
+        self._wire = wire
+        self._sigma = sigma
+        self._zi = z_i
+    
+    # Getters and setters
+    # Wire
+    def get_wire(self):
+        return self._wire
+
+    def set_wire(self, wire):
+        self._wire = wire
+
+    # Params
+    def get_params(self):
+        return self._params
+    
+    def set_params(self, parameters):
+        self._params = parameters
+
+     # Z
+    def get_zi(self):
+        return self._zi
+
+    def set_zi(self, z):
+        self._zi = z
+
+    # Sigma
+    def get_sigma(self):
+        return self._sigma
+
+    # Methods to compute properties of the hit
+
+    # Hit residual
+    def res(self):
+        return fast_res(self._params)
+    
+    # Chi2
+    def chi2(self):
+        return fast_chi2(self._params)
+    
+    # Derivatives
+    def der_align(self):
+        return [der(self._params) for der in fast_der_align]
+    
+    def der_track(self):
+        return [der(self._params) for der in fast_der_track]
+    
+    def der_test(self):
+        return der_mxy(*self._params)
+    
+    # Wire coordinates
+    def x_wire(self):
+        return fast_x([*self._wire_params, self._zi])
+    
+    def y_wire(self):
+        return fast_y([*self._wire_params, self._zi])
+    
+    def z_wire(self):
+        return fast_z([*self._wire_params, self._zi])
+    
 
 class CRTrack() :
     """
-    Class allowing to handle easily the 
+    Class allowing to handle easily the
     data structure of the CRTree in the .root
     file.
     """
@@ -324,13 +386,13 @@ class CRTrack() :
                      for wire, doca, sigma in zip(event.wire,
                                                   event.doca,
                                                   event.sigma)]
-        print(f'Track pars : xi = {event.GetLeaf("mxy").GetValue():.6f}, x0 = {event.GetLeaf("qxy").GetValue():.6f}, eta = {event.GetLeaf("myz").GetValue():.6f}, z0 = {event.GetLeaf("qyz").GetValue():.6f}')
+        #print(f'Track pars : xi = {event.GetLeaf("mxy").GetValue():.6f}, x0 = {event.GetLeaf("qxy").GetValue():.6f}, eta = {event.GetLeaf("myz").GetValue():.6f}, z0 = {event.GetLeaf("qyz").GetValue():.6f}')
                      #if wire in good_wires] # comment this part to fix the reference of some wires
         if len(self.hits) < 5:
             self.chi2 = 1e30
         else:
-            self.chi2 = np.array([hit.chi2 for hit in self.hits]).sum()/(len(self.hits) - 4.) # total chi2/dof
-        self.der_loc = np.array([hit.der_test for hit in self.hits]).sum() # sum of local der mxy
+            self.chi2 = np.array([hit.chi2() for hit in self.hits]).sum()/(len(self.hits) - 4.) # total chi2/dof
+        self.der_loc = np.array([hit.der_test() for hit in self.hits]).sum() # sum of local der mxy
         # Array format to write on binary file for Pede routine
         self.glder = array.array('f')
         self.inder = array.array('i')
@@ -338,21 +400,21 @@ class CRTrack() :
         self.inder.append(0)
         if True:
             for hit in self.hits:
-                self.glder.append(hit.res)
+                self.glder.append(hit.res())
                 self.inder.append(0)
-                self.glder.fromlist(hit.der_track)
+                self.glder.fromlist(hit.der_track())
                 self.inder.fromlist([1, 2, 3, 4]) # counts from 1 to N_FIT
-                self.glder.append(hit.sigma)
+                self.glder.append(hit.get_sigma())
                 self.inder.append(0)
-                self.glder.fromlist(hit.der_align)
-                glb_label = [hit.wire*ALIGN_PARS + i + 1 for i in range(ALIGN_PARS)] #[dict_wire_to_label[hit.wire]*ALIGN_PARS + i + 1 for i in range(ALIGN_PARS)] 
+                self.glder.fromlist(hit.der_align())
+                glb_label = [hit.get_wire()*ALIGN_PARS + i + 1 for i in range(ALIGN_PARS)] #[dict_wire_to_label[hit.wire]*ALIGN_PARS + i + 1 for i in range(ALIGN_PARS)]
                 self.inder.fromlist(glb_label)
 
 
     def write_to_binary_file(self, aFile):
         """
         Writes the output binary file to submit to Pede routine
-        aFile : object file on which to write. The file should be opened in "ab" mode 
+        aFile : object file on which to write. The file should be opened in "ab" mode
         """
         num_words_to_write = len(self.inder) * 2
         if (len(self.glder) != len(self.inder)):
@@ -382,7 +444,7 @@ def write_parameter_file(geom):
                 label = w * ALIGN_PARS + i + 1 #dict_wire_to_label[w] * ALIGN_PARS + i + 1
                 pre_sigma = 0.0
                 if not w in good_wires:
-                    pre_sigma = -1.0 # Fix bad wire parameters 
+                    pre_sigma = -1.0 # Fix bad wire parameters
                 if i == 4:
                     pre_sigma = -1.0 # fix gamma
                 if ALIGN_PARS == 5:
@@ -436,7 +498,7 @@ def write_measurement_file():
                 # y measurement
 
 
-                
+
 ##############################################################
 #                        BELLURIE                            #
 ##############################################################
@@ -466,24 +528,7 @@ def plot_survey(geom):
                           z,
                           0,
                           0.005)
-            res.append(event.res)
-
-    # Method 2
-    """
-    id_wire, x_s, y_s, z_s, w_s = np.loadtxt("anode_CYLDCH46.txt", unpack=True)
-    for wire, x, y, z, w in zip(id_wire, x_s, y_s, z_s, w_s):
-        if int(wire) in good_wires:
-            event = CRHit(geom,
-                          int(wire),
-                          0.,
-                          x,
-                          0.,
-                          z,
-                          w,
-                          0.,
-                          0.005)
-            res.append(event.res)
-    """
+            res.append(event.res())
     # Plot survey residuals
     plt.figure(1)
     plt.title(f"Difference for GEOMETRY {geom} with respect to Survey")
@@ -514,10 +559,10 @@ def plot_geometry(geom, min_wire=192, max_wire=1920, add_survey=True):
         ax.plot(x_w, y_w, z_vec, color='pink', alpha=.2)
     # Add survey points (optional)
     if add_survey:
-        id_wire, x_s, y_s, z_s, w_s = np.loadtxt('anode_CYLDCH46.txt', unpack=True) 
+        id_wire, x_s, y_s, z_s, w_s = np.loadtxt('anode_CYLDCH46.txt', unpack=True)
         ax.scatter(x_s[w], y_s[w], z_s[w], marker='.', color='red', alpha=.3)
     plt.show()
-        
+
 
 ###########################################################################
 
@@ -531,8 +576,8 @@ def calculateGamma(event):
         # matrix Gamma
         matrixGamma = np.zeros(shape=(N_FIT, N_FIT))
         for hit in event:
-            if hit.chi2 < 5e1:
-                rows = np.array([der_i*hit.der_track/(hit.sigma**2) for der_i in hit.der_track])
+            if hit.chi2() < 5e1:
+                rows = np.array([der_i*hit.der_track()/(hit.get_sigma()**2) for der_i in hit.der_track()])
                 matrixGamma += rows
                 del rows
                 #gc.collect()
@@ -542,10 +587,10 @@ def calculateG(event):
         # matrix G
         matrixG = np.zeros(shape=(N_ALIGN, N_FIT))
         for hit in event:
-            if hit.chi2 < 5e1:
-                if hit.wire in good_wires:
-                    wire = dict_wire_to_idx[hit.wire]
-                    rows = np.array([der_i * hit.der_track / (hit.sigma**2) for der_i in hit.der_align])
+            if hit.chi2() < 5e1:
+                if hit.get_wire() in good_wires:
+                    wire = dict_wire_to_idx[hit.get_wire()]
+                    rows = np.array([der_i * hit.der_track() / (hit.get_sigma()**2) for der_i in hit.der_align()])
                     matrixG[wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS, : ] += rows
                     del wire, rows
                     #gc.collect()
@@ -557,10 +602,10 @@ def calculateB(event):
     """
     vectorB = np.zeros(N_ALIGN)
     for hit in event:
-        if hit.chi2 < 5e1:
-            if hit.wire in good_wires:
-                wire = dict_wire_to_idx[hit.wire]
-                vectorB[wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS] += hit.der_align * hit.res / (hit.sigma**2)
+        if hit.chi2() < 5e1:
+            if hit.get_wire() in good_wires:
+                wire = dict_wire_to_idx[hit.get_wire()]
+                vectorB[wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS] += hit.der_align() * hit.res() / (hit.get_sigma()**2)
                 del wire
                 #gc.collect()
     return vectorB
@@ -571,9 +616,9 @@ def calculateBeta(event):
     """
     vectorBeta = np.zeros(N_FIT)
     for hit in event:
-        if hit.chi2 < 5e1:
+        if hit.chi2() < 5e1:
             #if hit.wire in good_wires: #uncomment if no wires is fixed
-            vectorBeta += hit.der_track * hit.res / (hit.sigma**2)
+            vectorBeta += hit.der_track() * hit.res() / (hit.get_sigma()**2)
     return vectorBeta
 
 def calculateC(event):
@@ -583,10 +628,10 @@ def calculateC(event):
     """
     matrixC = np.zeros(shape=(N_ALIGN, N_ALIGN))
     for hit in event:
-        if hit.chi2 < 5e1:
-            if hit.wire in good_wires:
-                wire = dict_wire_to_idx[hit.wire]
-                rows = np.array([der_i*hit.der_align / (hit.sigma**2) for der_i in hit.der_align])
+        if hit.chi2() < 5e1:
+            if hit.get_wire() in good_wires:
+                wire = dict_wire_to_idx[hit.get_wire()]
+                rows = np.array([der_i*hit.der_align() / (hit.get_sigma()**2) for der_i in hit.der_align()])
                 matrixC[wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS, wire*ALIGN_PARS : wire*ALIGN_PARS + ALIGN_PARS] += rows
                 del rows, wire
                 #gc.collect()
@@ -597,7 +642,7 @@ def calculateCPrime(matrixCPrime, event):
     CPrime is the matrix to invert, with both misalignment
     and track fitting parameters.
     """
-    
+
     G = calculateG(event)
     C = calculateC(event)
     try:
@@ -639,20 +684,7 @@ def survey(geom, matrixCPrime):
     obtained from software computation with CYLDCH 46.
     50 um error on measurements.
     """
-    """
-    id_wire, x_s, y_s, z_s, w_s = np.loadtxt("anode_CYLDCH46.txt", unpack=True)
-    for wire, x, y, z, w in zip(id_wire, x_s, y_s, z_s, w_s):
-        if int(wire) in good_wires:
-            event = [CRHit(geom,
-                           int(wire),
-                           0.,
-                           x,
-                           0.,
-                           z,
-                           w,
-                           0,
-                           0.005)]
-    """
+
     id_wire = np.linspace(0, 1919, 1920, dtype='int')
     z_survey = np.array([-95., 95.])
     for id in id_wire:
@@ -673,12 +705,12 @@ def survey(geom, matrixCPrime):
                           z,
                           0.,
                           0.005)]
-    
+
             C = calculateC(event)
             matrixCPrime += C
             del event, C
             #gc.collect()
-    
+
     return matrixCPrime
 
 def millepede(geom, tree):
@@ -690,28 +722,27 @@ def millepede(geom, tree):
     matrixCPrime = np.zeros(shape=(N_ALIGN, N_ALIGN))
     vectorBPrime = np.zeros(N_ALIGN)
 
-    # Insert survey measurements 
+    # Insert survey measurements
     t_start = time.time()
     #matrixCPrime = survey(geom, matrixCPrime)
     t_stop = time.time()
     #print(f"Survey inserted in {((t_stop - t_start)/3600):.2f} h...")
 
     # Loop on event to fill the matrices
-    #h = TH1D(f"hchi2{GEO_ID}", "Geometry = {GEO_ID}", 100, 0., 10.)
     for i, entry in enumerate(tree):
         #tstartloop = time.time()
         event = CRTrack(entry, geom)
-        #h.Fill(event.chi2)
-        print(f"dmxy = {event.der_loc:.5f}")
-        print(f"chi2 = {event.chi2:.4f}")
+        draw_scan_mxy(event)
+        ##h.Fill(event.chi2)
+        if event.chi2 > 10:
+            print(f"chi2 = {event.chi2:.4f}. Event skipped.")
+        #print(f"dmxy = {event.der_loc:.5f}")
+        #print(f"chi2 = {event.chi2:.4f}")
         if i%10000 == 0:
             print(f"Evento {i}")
         matrixCPrime = calculateCPrime(matrixCPrime, event.hits)
-        vectorBPrime = calculateBPrime(vectorBPrime, event.hits)        
+        vectorBPrime = calculateBPrime(vectorBPrime, event.hits)
         del event
-        #gc.collect()
-        #tstoploop = time.time()
-        #print(f"{tstoploop - tstartloop:.3f} s for 1 event in millepede loop")
 
     # Calculating determinant
     determinant = np.linalg.det(matrixCPrime)
@@ -726,14 +757,15 @@ def millepede(geom, tree):
     matrixCPrimeInverted = inv(matrixCPrime)
 
     return matrixCPrimeInverted @ vectorBPrime
-    
-    #h.SaveAs(f"h{GEO_ID}.C")
+
 
 #############################################################################
 #################           RUN MILLE             ###########################
 #############################################################################
 
 ITERATION = 0 # Step of iteration
+print(f"Data File opened... GEOMETRY ID = {GEO_ID}, MillePede Step = {ITERATION} ...")
+
 outputfilename = f"mp2meg2_MC_0509.bin"
 
 # TTree with cosmics events for millepede
@@ -742,25 +774,8 @@ inputfiles = f"residuals_iter_{ITERATION}/outTrack_*.root"
 mcinput = f"mc/MCTrack_lineWire*.root"
 #crtree.Add(mcinput)
 crtree.Add("mc/MCTrack_lineWire_test.root")
-#crtree.Add("mc/MCTrack_lineWire_1.root")
-#crtree.Add("mc/MCTrack_lineWire_2.root")
-#crtree.Add("mc/MCTrack_30000_minchi2_newGeo.root")
-#crtree.Add("mc/MCTrack_40000_minchi2_newGeo.root")
-#crtree.Add("mc/MCTrack_50000_minchi2_newGeo.root")
-#crtree.Add("mc/MCTrack_60000_minchi2_newGeo.root")
-#crtree.Add("mc/MCTrack_70000_minchi2_newGeo.root")
-#crtree.Add("mc/MCTrack_80000_minchi2_newGeo.root")
-#crtree.Add("mc/MCTrack_90000_minchi2_newGeo.root")
-#crtree.Add("mc/MCTrack_100000_minchi2_newGeo.root")
-#crtree.Add("mc/MCTrack_110000_minchi2_newGeo.root")
-#crtree.Add("mc/MCTrack_120000_minchi2_newGeo.root")
-#crtree.Add("mc/MCTrack_130000_minchi2_newGeo.root")
-#crtree.Add("mc/MCTrack_140000_minchi2_newGeo.root")
-
-print(f"Data File opened... GEOMETRY ID = {GEO_ID}, MillePede Step = {ITERATION} ...")
-
-#plot_survey(GEO_ID)
-
+#crtree.Add("mc/MCTrack_lineWire_2*.root")
+#crtree.Add("mc/MCTrack_lineWire_3*.root")
 
 # Write parameter file for this GEO_ID
 """
@@ -793,104 +808,8 @@ print(f"{outputfilename} produced. Time needed {(t_stop - t_start)/3600 :.1f} h"
 t_stop = time.time()
 #print(f"{len(events)} eventi letti... tempo impiegato {(t_stop - t_start)/3600 :.1f} h")
 
-# Get the chi2 scan for the sagitta parameter of some wires
-"""
-chi2_scan_sag1009 = np.zeros(100)
-chi21009 = []
-count1009 = 0
-chi2_scan_sag1234 = np.zeros(100)
-count1234 = 0
-chi21234 = []
-chi2_scan_sag955 = np.zeros(100)
-count955 = 0
-chi2955 = []
-chi2_scan_sag634 = np.zeros(100)
-count634 = 0
-chi2634 = []
-chi2_scan_sag580 = np.zeros(100)
-count580 = 0
-chi2580 = []
-
-for track in events:
-    for hit in track.hits:
-        if hit.chi2 < 3:
-            if hit.wire == 1009:
-                chi2_scan_sag1009 += hit.chi2_scan
-                count1009 += 1
-                chi21009.append(hit.chi2_scan.sum())
-            if hit.wire == 1234:
-                chi2_scan_sag1234 += hit.chi2_scan
-                count1234 += 1
-                chi21234.append(hit.chi2_scan.sum())
-            if hit.wire == 955:
-                chi2_scan_sag955 += hit.chi2_scan
-                count955 += 1
-                chi2955.append(hit.chi2_scan.sum())
-            if hit.wire == 634:
-                chi2_scan_sag634 += hit.chi2_scan
-                count634 += 1
-                chi2634.append(hit.chi2_scan.sum())
-            if hit.wire == 580:
-                chi2_scan_sag580 += hit.chi2_scan
-                count580 += 1
-                chi2580.append(hit.chi2_scan.sum())
-
-#print(f"580 {count580}, 634 {count634}, 955 {count955}, 1234 {count1234}, 1009 {count1009}")
-
-# Plot profile of chi2
-
-plt.figure(1)
-plt.subplot(121)
-plt.title(r"$\chi^2$ scan wire 1009")
-plt.xlabel(r"$\delta$sag [cm]")
-plt.ylabel(r"$\chi^2$")
-plt.plot(np.linspace(-0.01, 0.01, 100), chi2_scan_sag1009/count1009)
-plt.subplot(122)
-plt.hist(chi21009, bins=100)
-
-plt.figure(2)
-plt.subplot(121)
-plt.title(r"$\chi^2$ scan wire 1234")
-plt.xlabel(r"$\delta$sag [cm]")
-plt.ylabel(r"$\chi^2$")
-plt.plot(np.linspace(-0.01, 0.01, 100), chi2_scan_sag1234/count1234)
-plt.subplot(122)
-plt.hist(chi21234, bins=100)
-
-
-plt.figure(3)
-plt.subplot(121)
-plt.title(r"$\chi^2$ scan wire 955")
-plt.xlabel(r"$\delta$sag [cm]")
-plt.ylabel(r"$\chi^2$")
-plt.plot(np.linspace(-0.01, 0.01, 100), chi2_scan_sag955/count955)
-plt.subplot(122)
-plt.hist(chi2955, bins=100)
-
-plt.figure(5)
-plt.subplot(121)
-plt.title(r"$\chi^2$ scan wire 634")
-plt.xlabel(r"$\delta$sag [cm]")
-plt.ylabel(r"$\chi^2$")
-plt.plot(np.linspace(-0.01, 0.01, 100), chi2_scan_sag634/count634)
-plt.subplot(122)
-plt.hist(chi2634, bins=100)
-
-plt.figure(6)
-plt.subplot(121)
-plt.title(r"$\chi^2$ scan wire 580")
-plt.xlabel(r"$\delta$sag [cm]")
-plt.ylabel(r"$\chi^2$")
-plt.plot(np.linspace(-0.01, 0.01, 100), chi2_scan_sag580/count580)
-plt.subplot(122)
-plt.hist(chi2580, bins=100)
-
-plt.show()
-"""
-
-
 # MillePede
-outputfile_name = f"mc_results_millepede_lineWire_noSurvey_noFixed_chi25_events100k.txt"
+outputfile_name = f"mc_results_millepede_lineWire_noSurvey_fixed200-207-588-595_chi210_events200k.txt"
 try:
     results = millepede(GEO_ID, crtree)
     print("------------- MILLEPEDE INVERTED MATRIX ---------------- \n")
