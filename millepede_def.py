@@ -25,7 +25,7 @@ from ROOT import TChain, TFile, gInterpreter, TH1D
 gInterpreter.ProcessLine('#include "cosmics_includes_newGeo.h"')
 
 import matplotlib.pyplot as plt
-from numpy.linalg import inv
+from numpy.linalg import inv, norm
 import numpy as np
 from symengine import lambdify, diff, symbols, sin, cos, Matrix, sqrt # Package for symbolic calc in Python. Based on C and C++
 import sympy as sym # Package for symbolic calc in Python
@@ -39,6 +39,33 @@ sym.init_printing(use_unicode=True)
 x0, y0, z0, s, gamma, theta, phi, L, z_ds, z_us, zi, ti, sigma_i = symbols("x0 y0 z0 s gamma theta phi L z_ds z_us zi ti sigma_i")
 # local parameters
 mxy, qxy, myz, qyz = symbols("mxy qxy myz qyz")
+
+
+def der_mxy(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i):
+    """
+    Exact derivative of chi2 with respect to mxy
+    """
+    w = np.array([np.cos(phi)*np.sin(theta),
+                  np.sin(theta)*np.sin(phi),
+                  np.cos(theta)])
+    w0 = np.array([x0,
+                   y0,
+                   z0])
+    x0 = np.array([qxy,
+                   0.,
+                   qyz])
+    l = np.array([mxy,
+                  1.,
+                  myz])
+    n = np.cross(w, l)
+    n_mag = norm(n)
+    diff_pos = w0 - x0
+    numerator = np.dot(n, diff_pos)
+    doca = np.sqrt((numerator / n_mag)**2)
+    residual = (ti - doca - 0.00001 + np.random.uniform(0.00002))/sigma_i
+    derivative = (1./doca) * ((numerator*(w[2]*diff_pos[1] - w[1]*diff_pos[2])*n_mag**2 - (numerator**2)*(n[1]*w[2] - n[2]*w[1]))/(n_mag**4))
+    return - 2. * residual * (1. / sigma_i) * derivative
+    
 
 # Definition of wire geometry
 def wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi):
@@ -125,13 +152,19 @@ def res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi,
     wire_vector = Matrix([cos(phi)*sin(theta),
                     sin(phi)*sin(theta),
                     cos(theta)])
-    point_on_wire = wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi)
+    point_on_wire = Matrix([x0,
+                            y0,
+                            z0]) #wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi)
     # The distance of closest approach between wire and line is given by:
     # doca = |n . (point_on_line - point_on_wire)| / |n|
-    # n is the vector perpendicular to both line and wire: n = wire_vector x line_origin
-    n = wire_vector.cross(line_vector)
-    doca = sqrt( (n.dot(point_on_wire - line_origin))**2 / (n.dot(n)))
-    
+    # n is the vector perpendicular to both line and wire: n = wire_vector x line_vector
+    n = Matrix([sin(phi)*sin(theta)*myz - cos(theta),
+                cos(theta)*mxy - myz * cos(phi)*sin(theta),
+                cos(phi)*sin(theta) - sin(phi)*sin(theta)*mxy])
+    n_mag2 = n[0]*n[0] + n[1]*n[1] + n[2]*n[2]
+    n_points = n[0] * (point_on_wire[0] - line_origin[0]) + n[1] * (point_on_wire[1] - line_origin[1]) + n[2] * (point_on_wire[2] - line_origin[2])
+    doca = sqrt((n_points)*(n_points) / (n_mag2))
+
     # Return the hit residual
     return ti - doca
 
@@ -141,7 +174,7 @@ def chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi
     Calculates the correction to global chi square from a given data point.
     """
     a_res = res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i)
-    return a_res**2 / sigma_i**2
+    return (a_res/sigma_i)*(a_res/sigma_i)
 
 #In order to make calculation fast, the chi 2 function and its derivatives must be lambdified.
 fast_chi2 = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i)])
@@ -149,18 +182,18 @@ fast_x = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi], [x_wire
 fast_y = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi], [y_wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi)])
 fast_z = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi], [z_wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi)])
 fast_res = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i)])
-fast_der_x0 = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), x0)])
-fast_der_y0 = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), y0)])
-fast_der_z0 = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), z0)])
-fast_der_theta = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), theta)])
-fast_der_phi = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), phi)])
-fast_der_gamma = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), gamma)])
-fast_der_s = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), s)])
-fast_der_L = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), L)])
-fast_der_mxy = lambdify([x0, y0, z0,theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), mxy)])
-fast_der_qxy = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), qxy)])
-fast_der_myz = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), myz)])
-fast_der_qyz = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), qyz)])
+fast_der_x0 = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), x0, 1)])
+fast_der_y0 = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), y0, 1)])
+fast_der_z0 = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), z0, 1)])
+fast_der_theta = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), theta, 1)])
+fast_der_phi = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), phi, 1)])
+fast_der_gamma = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), gamma, 1)])
+fast_der_s = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), s, 1)])
+fast_der_L = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(res(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), L, 1)])
+fast_der_mxy = lambdify([x0, y0, z0,theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), mxy, 1)])
+fast_der_qxy = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), qxy, 1)])
+fast_der_myz = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), myz, 1)])
+fast_der_qyz = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i], [diff(chi2(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, mxy, qxy, myz, qyz, zi, ti, sigma_i), qyz, 1)])
 
 fast_wire_coord = lambdify([x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi], [wire_coord(x0, y0, z0, theta, phi, gamma, s, L, z_ds, z_us, zi)])
 
@@ -242,8 +275,9 @@ class CRHit() :
         self.y = fast_y([*wire_params, z_i])
         self.z = fast_z([*wire_params, z_i])
         #print(f"wire {wire} position at {z_i} = {self.x:.4f} {self.y:.4f} {self.z:.4f}")
-        #print("Residual =", self.res)
+        print(f"Residual = {self.res:.4f}")
         self.sigma = sigma
+        self.der_test = der_mxy(*self.params)
         self.der_align = [der(self.params) for der in fast_der_align]
         #print("Derivatives of alingment parameters", self.der_align)
         if not any(self.der_align):
@@ -280,22 +314,23 @@ class CRTrack() :
         """
         self.hits = [CRHit(ID,
                            wire,
-        		           event.GetLeaf("mxy").GetValue(),
-        		           event.GetLeaf("qxy").GetValue(),
-        		           event.GetLeaf("myz").GetValue(),
-        		           event.GetLeaf("qyz").GetValue(),
-        		           0.,
-        		           doca,
-        		           sigma)
+        		   event.GetLeaf("mxy").GetValue(),
+        		   event.GetLeaf("qxy").GetValue(),
+        		   event.GetLeaf("myz").GetValue(),
+        		   event.GetLeaf("qyz").GetValue(),
+        		   0.,
+        		   doca,
+        		   sigma)
                      for wire, doca, sigma in zip(event.wire,
                                                   event.doca,
                                                   event.sigma)]
-        #print(f'Track pars : xi = {event.GetLeaf("mxy").GetValue()}, x0 = {event.GetLeaf("qxy").GetValue()}, eta = {event.GetLeaf("myz").GetValue()}, z0 = {event.GetLeaf("qyz").GetValue()}')
+        print(f'Track pars : xi = {event.GetLeaf("mxy").GetValue():.6f}, x0 = {event.GetLeaf("qxy").GetValue():.6f}, eta = {event.GetLeaf("myz").GetValue():.6f}, z0 = {event.GetLeaf("qyz").GetValue():.6f}')
                      #if wire in good_wires] # comment this part to fix the reference of some wires
         if len(self.hits) < 5:
             self.chi2 = 1e30
         else:
             self.chi2 = np.array([hit.chi2 for hit in self.hits]).sum()/(len(self.hits) - 4.) # total chi2/dof
+        self.der_loc = np.array([hit.der_test for hit in self.hits]).sum() # sum of local der mxy
         # Array format to write on binary file for Pede routine
         self.glder = array.array('f')
         self.inder = array.array('i')
@@ -667,12 +702,8 @@ def millepede(geom, tree):
         #tstartloop = time.time()
         event = CRTrack(entry, geom)
         #h.Fill(event.chi2)
-        
-        if event.chi2 > 5:
-            print("chi2 > 5")
-            del event
-            #gc.collect()
-            continue
+        print(f"dmxy = {event.der_loc:.5f}")
+        print(f"chi2 = {event.chi2:.4f}")
         if i%10000 == 0:
             print(f"Evento {i}")
         matrixCPrime = calculateCPrime(matrixCPrime, event.hits)
@@ -710,8 +741,8 @@ crtree = TChain("trk")
 inputfiles = f"residuals_iter_{ITERATION}/outTrack_*.root"
 mcinput = f"mc/MCTrack_lineWire*.root"
 #crtree.Add(mcinput)
-crtree.Add("mc/MCTrack_lineWire_0.root")
-crtree.Add("mc/MCTrack_lineWire_1.root")
+crtree.Add("mc/MCTrack_lineWire_test.root")
+#crtree.Add("mc/MCTrack_lineWire_1.root")
 #crtree.Add("mc/MCTrack_lineWire_2.root")
 #crtree.Add("mc/MCTrack_30000_minchi2_newGeo.root")
 #crtree.Add("mc/MCTrack_40000_minchi2_newGeo.root")
